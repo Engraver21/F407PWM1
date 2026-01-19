@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/motor_ctrl.c
     Core/Src/delay.c
     Core/Src/Ball_screw_contrl.c
+    Core/Src/data_pro.c
 )
 
 # Add include paths

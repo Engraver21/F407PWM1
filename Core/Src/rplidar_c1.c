@@ -1,8 +1,10 @@
 #include "rplidar_c1.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h> 
 #include "usart.h" // 用于 UART 传输函数
-
+#include "data_pro.h"
+extern LidarData_t lidar_data[LIDAR_DATA_SIZE];
 
 static const uint8_t CMD_START_SCAN[] = {0xA5, 0x20};
 static const uint8_t CMD_STOP_SCAN[]  = {0xA5, 0x25};
@@ -121,6 +123,7 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
                                 lidar->packet_index = 0; 
 
                                 uint8_t sync_quality     = lidar->packet_buffer[0];
+                                uint8_t quality          = sync_quality >> 2;
                                 uint8_t angle_low_byte   = lidar->packet_buffer[1];
                                 uint8_t sync_bit         = (sync_quality & 0x01);
                                 uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;
@@ -131,18 +134,11 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
                                     //char avg_msg[64];
                                     if (sync_bit == 1 && lidar->total_distance_count > 10) { 
                                     lidar->last_avg_distance_x4 = (uint16_t)(lidar->total_distance_sum / lidar->total_distance_count);
-                                        // 打印格式：平均距离(mm) | 有效点数
-                                    // int len = sprintf(avg_msg, "Dist: %u mm, Pts: %u \r\n", 
-                                    //             (unsigned int)(lidar->last_avg_distance_x4 / 4), 
-                                    //             (unsigned int)lidar->total_distance_count);
-                                    // UART_DMA_Transmit((uint8_t*)avg_msg, len);
-                                    
-                                    // 清零
-                                    //lidar->total_distance_sum = 0;
-                                    //lidar->total_distance_count = 0;
                                     }
                                     else if (sync_bit == 1) {
                                         // 虽然是新的一圈，但点数太少，认为是噪音，直接清零不打印
+                                        uint8_t * S = (uint8_t *) "T ";
+                                        UART_DMA_Transmit((uint8_t*)S, strlen(S));
                                         lidar->total_distance_sum = 0;
                                         lidar->total_distance_count = 0;
                                     }
@@ -151,13 +147,28 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
                                     uint16_t raw_dist  = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
                                     uint16_t angle_data_x64 = (raw_angle >> 1);
                                     uint16_t dist_data_x4 = raw_dist;
-
-                                    char ang_msg[256];
+                                    static uint16_t point_index = 0;// 用于存储点的索引
+                                    // uint8_t  msg[64];
+                                    lidar_data[point_index].angle = angle_data_x64;// 存储角度
+                                    lidar_data[point_index].distance = dist_data_x4;// 存储距离
+                                    lidar_data[point_index].quality = quality;// 存储质量
                                     
-                                    int len = sprintf(ang_msg, "A:%u°,D:%umm\r\n", 
-                                                (unsigned int)(angle_data_x64/64), 
-                                                (unsigned int)dist_data_x4/4);
-                                    UART_DMA_Transmit((uint8_t*)ang_msg, len);
+                                    // int len  = sprintf(msg, "inf:%u,%u\r\n",
+                                    // lidar_data[point_index].angle,
+                                    // lidar_data[point_index].distance,
+                                    // lidar_data[point_index].quality
+                                    // );
+                                    // UART_DMA_Transmit(msg,len);
+
+
+                                    point_index++;// 增加索引
+
+                                    if (point_index>=LIDAR_DATA_SIZE) {// 循环存储
+                                        point_index = 0;
+                                    }
+
+                                    lidar->total_distance_sum = 0;
+                                    lidar->total_distance_count = 0;
 
                                     bool angle_ok = false;
                                     if (lidar->filter_wrap_around) {

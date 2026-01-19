@@ -35,11 +35,13 @@
 #include <stdio.h>
 #include "motor_ctrl.h"
 #include "Ball_screw_contrl.h"
+#include "data_pro.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 uint32_t key=0;
+extern LidarData_t lidar_data[LIDAR_DATA_SIZE];
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -132,6 +134,7 @@ int main(void)
     /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
     RPLIDAR_Process(&hlidar); // 定期调用雷达处理函数
+    printf_inf_le(lidar_data);
    // 2. [新增] 串口“起搏器”：检查串口是否因为错误而挂起了
       if (hlidar.lidar_uart->ErrorCode != HAL_UART_ERROR_NONE)
       {
