@@ -29,8 +29,10 @@
 #include "delay.h"
 #include "usart.h"   // 确保能找到 huart1
 #include "rplidar_c1.h" // 包含 RPLIDAR 库头文件
+#include "string.h"
 #include "key.h"
 #include <stdint.h>
+#include <stdio.h>
 #include "motor_ctrl.h"
 #include "Ball_screw_contrl.h"
 /* USER CODE END Includes */
@@ -54,6 +56,8 @@ uint32_t key=0;
 
 /* USER CODE BEGIN PV */
 RPLIDAR_Handle_t hlidar; // 定义雷达控制句柄
+extern DMA_HandleTypeDef hdma_usart6_rx;
+extern DMA_HandleTypeDef hdma_usart6_tx;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,23 +103,26 @@ int main(void)
   MX_DMA_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
-  MX_USART2_UART_Init();
   MX_TIM14_Init();
   MX_TIM3_Init();
   MX_TIM4_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
-  // &hdma_usart2_rx: 串口2的DMA接收句柄 (去 usart.c 或 usart.h 确认名字，通常是这个)
-  RPLIDAR_Init(&hlidar, &huart2, &huart1, &hdma_usart2_rx);
+  // &hdma_usart6_rx: 串口2的DMA接收句柄 (去 usart.c 或 usart.h 确认名字，通常是这个)
+  RPLIDAR_Init(&hlidar, &huart6, &huart1, &hdma_usart6_rx);
   delay_init(168);// 初始化延时函数，参数为系统时钟频率MHz
-  Ball_Screw_init(); // 初始化滚珠丝杠
+ // Ball_Screw_init(); // 初始化滚珠丝杠
 
   // 2. 启动 DMA 接收 (这一步非常重要，你的库底层应该封装了 HAL_UART_Receive_DMA)
   // 如果 RPLIDAR_Init 里没调用 HAL_UART_Receive_DMA，你需要在这里手动调用：
   // 注意：看你的库函数 RPLIDAR_StartScan 内部实现，通常它会发指令并启动接收。
-  RPLIDAR_StartScan(&hlidar);
+  RPLIDAR_StartScan(&hlidar);//* 启动雷达扫描 */
+  
   BigMotor_Start();//* 启动大电机 */
   LittleMotor_Start();/* 启动小电机 */
-  
+  printf("System Initialized.\r\n");
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -125,10 +132,23 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    key = key_scan( 0);     /* 按键扫描函数 */
-    control_motor(key);      /* 电机控制函数 */
-    Ball_screw_contrl();   /* 检测滚珠丝杠是否达到限位 */
-    
+    // key = key_scan( 0);     /* 按键扫描函数 */
+    // control_motor(key);      /* 电机控制函数 */
+    // Ball_screw_contrl();   /* 检测滚珠丝杠是否达到限位 */
+    RPLIDAR_Process(&hlidar); // 定期调用雷达处理函数
+   // 2. [新增] 串口“起搏器”：检查串口是否因为错误而挂起了
+      if (hlidar.lidar_uart->ErrorCode != HAL_UART_ERROR_NONE)
+      {
+          // 如果有错误，强制清除并重启
+          HAL_UART_AbortReceive(hlidar.lidar_uart);
+          HAL_UART_Receive_DMA(hlidar.lidar_uart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
+      }
+      
+      // 3. [新增] 如果 DMA 悄悄停了 (State 不是 BUSY_RX)，也重启它
+      if (hlidar.lidar_uart->RxState == HAL_UART_STATE_READY)
+      {
+           HAL_UART_Receive_DMA(hlidar.lidar_uart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
+      }
 
   }
   /* USER CODE END 3 */
@@ -180,7 +200,34 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+// 当串口接收中断发生时（收到一个字节），HAL库会自动调用这个函数
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  // 将中断事件传递给雷达库处理
+  // 假设你的雷达句柄叫 hlidar (在 main.c 顶部定义的那个)
+  RPLIDAR_RxCallback(&hlidar, huart);
+}
 
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    // 判断是不是雷达的串口 (假设是 huart6)
+    // 如果你的雷达是 huart2，请改为 huart2
+    if (huart->Instance == USART6) 
+    {
+        // 1. 发生错误了（比如 Overrun），先停止之前的 DMA
+        HAL_UART_DMAStop(huart);
+
+        // 2. 重新开启 DMA 接收！(这步最关键，让它继续干活)
+        // 注意：这里需要引用你的全局变量 hlidar
+        extern RPLIDAR_Handle_t hlidar; 
+        
+        // 重新启动接收，覆盖缓冲区
+        HAL_UART_Receive_DMA(huart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
+        
+        // 可选：重置读指针，防止处理脏数据
+        // hlidar.dma_read_index = 0; 
+    }
+}
 /* USER CODE END 4 */
 
 /**

@@ -99,7 +99,7 @@ void control_motor(uint8_t key)
                 BigMotor_Start();
                 sys_state.is_big_motor_running = true;
             }
-            printf("Big Motor: %s\r\n", sys_state.is_big_motor_running ? "ON" : "OFF");
+           // printf("Big Motor: %s\r\n", sys_state.is_big_motor_running ? "ON" : "OFF");
             break;
 
         case 2: // 小电机开关
@@ -110,7 +110,7 @@ void control_motor(uint8_t key)
                 LittleMotor_Start();
                 sys_state.is_lit_motor_running = true;
             }
-            printf("Little Motor: %s\r\n", sys_state.is_lit_motor_running ? "ON" : "OFF");
+            //printf("Little Motor: %s\r\n", sys_state.is_lit_motor_running ? "ON" : "OFF");
             break;
 
         case 3: // 调速
@@ -133,7 +133,7 @@ void control_motor(uint8_t key)
             if (!sys_state.is_lit_motor_running) LittleMotor_Stop();
 
             // 在变量前面加 (int)
-            printf("Speed Level: %d, Freq: %d Hz\r\n", sys_state.speed_level, (int)new_freq);
+            //printf("Speed Level: %d, Freq: %d Hz\r\n", sys_state.speed_level, (int)new_freq);
             break;
         }
         

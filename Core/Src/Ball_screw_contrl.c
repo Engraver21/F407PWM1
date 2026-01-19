@@ -23,12 +23,12 @@ void Ball_Screw_init(void)
     ball_screw_pos.target_posi = 0;  // 目标位置
     ball_screw_pos.move_dir = 0;     // 移动方向
 
-    printf("Ball Screw Initialized. Upper Limit: %d, Lower Limit: %d\r\n", 
-           ball_screw_pos.upper_limit_sta, ball_screw_pos.lower_limit_sta);
+    /*printf("Ball Screw Initialized. Upper Limit: %d, Lower Limit: %d\r\n", 
+           ball_screw_pos.upper_limit_sta, ball_screw_pos.lower_limit_sta);*/
 
     screw_info.Pitch = 5; // 螺距，单位毫米
     screw_info.Lead = 10; // 导程，单位毫米
-    printf("Screw Info - Pitch: %d, Lead: %d\r\n", screw_info.Pitch, screw_info.Lead);
+    //printf("Screw Info - Pitch: %d, Lead: %d\r\n", screw_info.Pitch, screw_info.Lead);
 
     motor_39.motor_id = 39; // 电机ID
     motor_39.Degree_similarity = 2; // 相数   
@@ -37,8 +37,8 @@ void Ball_Screw_init(void)
     motor_39.PULSES_PER_REV = 200*motor_39.Segmentation;  // 转一圈需要的脉冲数
     motor_39.steps_left = 0;        // 剩余步数
     motor_39.direction = 0;         // 停止
-    printf("Motor Info - Degree Similarity: %d, Segmentation: %d, Step Angle: %.1f\r\n", 
-           motor_39.Degree_similarity, motor_39.Segmentation, motor_39.Step_angle);
+    /*printf("Motor Info - Degree Similarity: %d, Segmentation: %d, Step Angle: %.1f\r\n", 
+           motor_39.Degree_similarity, motor_39.Segmentation, motor_39.Step_angle);*/
     motor_57.motor_id = 57; // 电机ID
     motor_57.Degree_similarity = 2; // 相数   
     motor_57.Segmentation = 64;     // 细分    
@@ -46,8 +46,8 @@ void Ball_Screw_init(void)
     motor_57.PULSES_PER_REV = 200*motor_57.Segmentation;  // 转一圈需要的脉冲数
     motor_57.steps_left = 0;        // 剩余步数
     motor_57.direction = 0;         // 停止
-    printf("Motor Info - Degree Similarity: %d, Segmentation: %d, Step Angle: %.1f\r\n", 
-           motor_57.Degree_similarity, motor_57.Segmentation, motor_57.Step_angle);
+    /*printf("Motor Info - Degree Similarity: %d, Segmentation: %d, Step Angle: %.1f\r\n", 
+           motor_57.Degree_similarity, motor_57.Segmentation, motor_57.Step_angle);*/
 }
 
 
@@ -60,14 +60,14 @@ void Ball_screw_contrl(void)
         BigMotor_Stop();
         LittleMotor_Stop();
         ball_screw_pos.upper_limit_sta = true;
-        printf("Reached Upper Limit! Motors Stopped.\r\n");
+       // printf("Reached Upper Limit! Motors Stopped.\r\n");
     }
     if(HAL_GPIO_ReadPin(Microswitch_Down_GPIO_Port, Microswitch_Down_Pin) == GPIO_PIN_RESET) // 下限位
     {
         BigMotor_Stop();
         LittleMotor_Stop();
         ball_screw_pos.lower_limit_sta = true;
-        printf("Reached Lower Limit! Motors Stopped.\r\n");
+       // printf("Reached Lower Limit! Motors Stopped.\r\n");
     }
 }
 
