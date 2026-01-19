@@ -117,11 +117,8 @@ int main(void)
   // 如果 RPLIDAR_Init 里没调用 HAL_UART_Receive_DMA，你需要在这里手动调用：
   // 注意：看你的库函数 RPLIDAR_StartScan 内部实现，通常它会发指令并启动接收。
   RPLIDAR_StartScan(&hlidar);//* 启动雷达扫描 */
-  
-  BigMotor_Start();//* 启动大电机 */
-  LittleMotor_Start();/* 启动小电机 */
+  HAL_UART_Receive_DMA(&huart6, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
   printf("System Initialized.\r\n");
-
 
   /* USER CODE END 2 */
 
@@ -130,11 +127,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-
     /* USER CODE BEGIN 3 */
-    // key = key_scan( 0);     /* 按键扫描函数 */
-    // control_motor(key);      /* 电机控制函数 */
-    // Ball_screw_contrl();   /* 检测滚珠丝杠是否达到限位 */
     RPLIDAR_Process(&hlidar); // 定期调用雷达处理函数
    // 2. [新增] 串口“起搏器”：检查串口是否因为错误而挂起了
       if (hlidar.lidar_uart->ErrorCode != HAL_UART_ERROR_NONE)

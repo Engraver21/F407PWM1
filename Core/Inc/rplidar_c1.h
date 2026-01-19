@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 // --- 配置 ---
-#define LIDAR_DMA_BUFFER_SIZE 2048 // DMA 缓冲区大小（从 main.c 移入）
+#define LIDAR_DMA_BUFFER_SIZE 4096 // DMA 缓冲区大小（从 main.c 移入）
 // --- 配置结束 ---
 
 // LIDAR 状态（从 main.c 移入）

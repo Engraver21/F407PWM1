@@ -204,27 +204,28 @@ HAL_StatusTypeDef RPLIDAR_Init(RPLIDAR_Handle_t* lidar,
 //         } // switch
 //     } // while
 // }
-#include <stdio.h> // 确保包含 stdio.h
+#include <stdio.h>
+
+// 这里的 hlidar 应该是你 main.c 里定义的全局变量，如果报错请引用 extern RPLIDAR_Handle_t hlidar;
+extern DMA_HandleTypeDef hdma_usart1_tx; // 确保你能引用到 TX 的 DMA 句柄
 
 void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)
 {
-    // 1. 计算 DMA 写指针位置 (使用取余防止越界)
+    // 1. 计算 DMA 写指针位置
     uint32_t dma_write_index = (LIDAR_DMA_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(lidar->lidar_dma)) % LIDAR_DMA_BUFFER_SIZE;
 
-    // 2. 安全计数器：防止一次处理太多数据卡死主循环
-    // 即使波特率很高，也建议限制单次处理量，把 CPU 时间分给电机控制
+    // 2. 安全计数器
     int process_safety_count = 0; 
-    const int MAX_PROCESS_PER_LOOP = 100; 
+    const int MAX_PROCESS_PER_LOOP = 500; // DMA发送模式下，处理能力增强，可以适当调大
 
     while ((lidar->dma_read_index != dma_write_index) && (process_safety_count < MAX_PROCESS_PER_LOOP))
     {
         process_safety_count++; 
 
-        // 从环形缓冲区取出一个字节
         uint8_t current_byte = lidar->dma_buffer[lidar->dma_read_index];
         lidar->dma_read_index = (lidar->dma_read_index + 1) % LIDAR_DMA_BUFFER_SIZE;
 
-        // 状态机异常保护
+        // 状态机保护
         if (!lidar->is_active && lidar->state != LIDAR_STATE_IDLE) {
              lidar->state = LIDAR_STATE_IDLE;
         }
@@ -232,16 +233,12 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)
             continue;
         }
 
-        // 核心状态机
         switch (lidar->state)
         {
-            case LIDAR_STATE_IDLE:
-                break;
+            case LIDAR_STATE_IDLE: break;
 
             case WAITING_FOR_DESCRIPTOR_A5:
-                if (current_byte == 0xA5) {
-                    lidar->state = WAITING_FOR_DESCRIPTOR_5A;
-                }
+                if (current_byte == 0xA5) lidar->state = WAITING_FOR_DESCRIPTOR_5A;
                 break;
 
             case WAITING_FOR_DESCRIPTOR_5A:
@@ -256,7 +253,6 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)
             case RECEIVING_DESCRIPTOR:
                 lidar->packet_buffer[lidar->packet_index++] = current_byte;
                 if (lidar->packet_index >= 5) {
-                    // 检查 SCAN 命令的描述符: 05 00 00 40 81
                     if (memcmp(lidar->packet_buffer, EXPECTED_SCAN_DESCRIPTOR, 5) == 0) {
                         lidar->packet_index = 0;
                         lidar->state = RECEIVING_SCAN_PACKET;
@@ -269,63 +265,73 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)
             case RECEIVING_SCAN_PACKET:
                 lidar->packet_buffer[lidar->packet_index++] = current_byte;
 
-                // 攒够 5 个字节（一个完整的测距点包）
                 if (lidar->packet_index >= 5) {
                     lidar->packet_index = 0; 
 
-                    // 解析协议位
+                    // --- 解析官方协议字段 ---
+                    // 参考手册 LR001 图表 4-5 
                     uint8_t sync_quality     = lidar->packet_buffer[0];
                     uint8_t angle_low_byte   = lidar->packet_buffer[1];
+                    uint16_t raw_angle       = (lidar->packet_buffer[2] << 8) | angle_low_byte;
+                    uint16_t raw_dist        = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
+
+                    // 校验位提取
                     uint8_t sync_bit         = (sync_quality & 0x01);
                     uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;
                     uint8_t check_bit        = (angle_low_byte & 0x01);
 
-                    // 校验检查
                     if ((sync_bit != inverse_sync) && (check_bit == 1)) {
                         
-                        //如果是新的一圈，重置计数
                         if (sync_bit == 1) {
-                            lidar->total_distance_count = 0;
+                            lidar->total_distance_count = 0; // 新的一圈
                         }
 
-                        // --- 核心解析 ---
-                        uint16_t raw_angle = (lidar->packet_buffer[2] << 8) | angle_low_byte;
-                        uint16_t raw_dist  = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
-                        
-                        uint16_t angle_data_x64 = (raw_angle >> 1); // 去掉校验位
                         uint16_t dist_data_x4 = raw_dist;
 
-                        // 1. 简单过滤：只要距离不为0就认为是有效点
                         if (dist_data_x4 > 0) {
                             lidar->total_distance_count++;
 
-                            // 换算物理单位
-                            float real_angle = angle_data_x64 / 64.0f; // 度
-                            float real_dist = dist_data_x4 / 4.0f;     // 毫米
+                            // ==============================================
+                            // 🟢 1. 数据换算 (复刻官方)
+                            // ==============================================
+                            // 角度: 去掉最后一位校验位，除以 64.0
+                            float theta = (raw_angle >> 1) / 64.0f; 
+                            
+                            // 距离: 除以 4.0 (手册说明: distance_q2/4.0 mm)
+                            float dist = dist_data_x4 / 4.0f;
+                            
+                            // 质量 Q: sync_quality 的高 6 位才是质量 (去掉低2位 sync 位)
+                            uint8_t quality = (sync_quality >> 2); 
 
                             // ==============================================
-                            // 🟢 修复方案：强制转为 int 打印
+                            // 🟢 2. DMA 智能发送 (关键升级)
                             // ==============================================
                             
-                            // 把角度转为整数（如果想保留小数，可以乘100再转int）
-                            int angle_int = (int)real_angle; 
-                            // 距离本身就是毫米，转int足够了
-                            int dist_int = (int)real_dist;
-
-                            char msg[64];
-                            
-                            // 使用 %d 而不是 %f，这样 100% 能打印出来！
-                            // 格式：A:角度 D:距离
-                            int len = sprintf(msg, "A:%d D:%d\r\n", angle_int, dist_int);
-                            
-                            // 发送数据
-                            HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)msg, len, 2);
+                            // 检查串口是否忙碌。如果还在发上一条，就跳过这一条，不等待！
+                            // 这样既不会阻塞 CPU，也不会因为覆盖缓冲区导致乱码。
+                            if (HAL_UART_GetState(lidar->pc_uart) == HAL_UART_STATE_READY)
+                            {
+                                // 定义一个静态缓冲区数组，轮流使用，避免覆盖
+                                static char dma_tx_buf[4][128];
+                                static int buf_index = 0;
+                                
+                                // 格式化：完全模仿官方 SDK 输出
+                                // theta: 357.69 Dist: 00000.00 Q: 47
+                                int len = sprintf(dma_tx_buf[buf_index], "theta: %06.2f Dist: %08.2f Q: %d\r\n", 
+                                                  theta, dist, quality);
+                                
+                                // 使用 DMA 发送！CPU 此时立刻可以去处理下一个 while 循环
+                                HAL_UART_Transmit_DMA(lidar->pc_uart, (uint8_t*)dma_tx_buf[buf_index], len);
+                                
+                                // 轮转到下一个缓冲区
+                                buf_index = (buf_index + 1) % 4;
+                            }
                         }
                     }
                 }
                 break;
-        } // switch
-    } // while
+        } 
+    } 
 }
 void RPLIDAR_StartScan(RPLIDAR_Handle_t* lidar)// 开始扫描
 {
