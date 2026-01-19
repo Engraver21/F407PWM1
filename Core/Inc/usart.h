@@ -21,6 +21,7 @@
 #ifndef __USART_H__
 #define __USART_H__
 
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,6 +49,7 @@ void MX_USART6_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 
+void UART_DMA_Transmit(uint8_t* data,uint16_t len);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

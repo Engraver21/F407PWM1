@@ -16,6 +16,7 @@
   *
   ******************************************************************************
   */
+#include <stdint.h>
 #include <stdio.h>  // 用于 printf
 #include <string.h> // 用于 memset (如果需要清空数组)
 
@@ -48,7 +49,7 @@ void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 460800;
+  huart1.Init.BaudRate = 460800*2;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -281,53 +282,11 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
   /* USER CODE END USART6_MspDeInit 1 */
   }
 }
-
-/* USER CODE BEGIN 1 */
-// // 串口接收事件回调函数 (放在 usart.c 里)
-// void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
-// {
-//     // 判断是否是串口 1 触发的中断
-//     if (huart->Instance == USART1)
-//     {
-//         // 1. 安全处理：给字符串末尾加结束符 (防止打印乱码)
-//         if (Size < RX_BUFFER_SIZE)
-//         {
-//             rx_buffer[Size] = '\0'; 
-//         }
-
-//         // 2. 打印接收到的数据
-//         printf("UART1 Received (%d bytes): %s\r\n", Size, rx_buffer);
-        
-//         // 可以在这里添加你的解析逻辑，比如：
-//         // if(strcmp((char*)rx_buffer, "LED_ON") == 0) { ... }
-//         // memset(rx_buffer, 0, RX_BUFFER_SIZE);// 清空缓冲区 (可选)
-//         // Size = 0;// 重置 Size (可选)
-
-//         // 3. 关键：重新开启接收 (否则只能收一次)
-//         HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_buffer, RX_BUFFER_SIZE);
-//     }
-//     if (huart->Instance == USART2)
-//     {
-//         // 1. 安全处理：给字符串末尾加结束符 (防止打印乱码)
-//         if (Size < RX_BUFFER_SIZE)
-//         {
-//             rx_buffer[Size] = '\0'; 
-//         }
-
-//         // 2. 打印接收到的数据
-//         printf("UART2 Received (%d bytes): %s\r\n", Size, rx_buffer);
-        
-//         // 可以在这里添加你的解析逻辑，比如：
-//         // if(strcmp((char*)rx_buffer, "LED_ON") == 0) { ... }
-//         // memset(rx_buffer, 0, RX_BUFFER_SIZE);// 清空缓冲区 (可选)
-//         // Size = 0;// 重置 Size (可选)
-
-//         // 3. 关键：重新开启接收 (否则只能收一次)
-//         HAL_UARTEx_ReceiveToIdle_DMA(&huart6, rx_buffer, RX_BUFFER_SIZE);
-//     }
-
-// }
-
+// 尝试启动发送
+void UART_DMA_Transmit(uint8_t *data, uint16_t len)
+{
+   HAL_UART_Transmit_DMA(&huart1, data, len);
+}
 
 
 // 重定向 printf 到 UART1 (阻塞模式)

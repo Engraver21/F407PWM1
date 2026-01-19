@@ -1,13 +1,13 @@
 #include "rplidar_c1.h"
 #include <stdio.h>
 #include <string.h> 
+#include "usart.h" // 用于 UART 传输函数
 
 
 static const uint8_t CMD_START_SCAN[] = {0xA5, 0x20};
 static const uint8_t CMD_STOP_SCAN[]  = {0xA5, 0x25};
 static const uint8_t EXPECTED_SCAN_DESCRIPTOR[] = {0x05, 0x00, 0x00, 0x40, 0x81};
-
-
+extern HAL_StatusTypeDef status;
 
 
 HAL_StatusTypeDef RPLIDAR_Init(RPLIDAR_Handle_t* lidar,
@@ -56,189 +56,35 @@ HAL_StatusTypeDef RPLIDAR_Init(RPLIDAR_Handle_t* lidar,
     return HAL_OK;
 }
 
-// void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循环中定期调用
-// {
-//     uint32_t dma_write_index = LIDAR_DMA_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(lidar->lidar_dma);
-
-//     while (lidar->dma_read_index != dma_write_index)
-//     {
-//         uint8_t current_byte = lidar->dma_buffer[lidar->dma_read_index];
-//         lidar->dma_read_index = (lidar->dma_read_index + 1) % LIDAR_DMA_BUFFER_SIZE;
-
-    
-//         if (!lidar->is_active && lidar->state != LIDAR_STATE_IDLE) {
-//              lidar->state = LIDAR_STATE_IDLE;
-//         }
-    
-//         if(lidar->state == LIDAR_STATE_IDLE && !lidar->is_active){
-//             continue;
-//         }
-
-
-//         switch (lidar->state)
-//         {
-//             case LIDAR_STATE_IDLE:
-    
-//                 break;
-
-//             case WAITING_FOR_DESCRIPTOR_A5:
-//                 if (current_byte == 0xA5) {
-//                     lidar->state = WAITING_FOR_DESCRIPTOR_5A;
-//                 }
-//                 break;
-
-//             case WAITING_FOR_DESCRIPTOR_5A:
-//                 if (current_byte == 0x5A) {
-//                     lidar->packet_index = 0;
-//                     lidar->state = RECEIVING_DESCRIPTOR;
-//                 } else if (current_byte != 0xA5) {
-//                     lidar->state = WAITING_FOR_DESCRIPTOR_A5; 
-//                 }
-//                 break;
-
-//             case RECEIVING_DESCRIPTOR:
-//                 lidar->packet_buffer[lidar->packet_index++] = current_byte;
-//                 if (lidar->packet_index >= 5) {
-//                     if (memcmp(lidar->packet_buffer, EXPECTED_SCAN_DESCRIPTOR, 5) == 0) {
-//                         const char msg_ok[] = "SCAN Descriptor OK.\r\n";
-//                         HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)msg_ok, sizeof(msg_ok) - 1, 20);
-//                         lidar->packet_index = 0;
-//                         lidar->state = RECEIVING_SCAN_PACKET;
-//                     } else {
-//                         const char msg_err[] = "HATA: Gecersiz Descriptor!\r\n";
-//                         HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)msg_err, sizeof(msg_err) - 1, 20);
-//                         lidar->state = WAITING_FOR_DESCRIPTOR_A5; 
-//                     }
-//                 }
-//                 break;
-
-//             case RECEIVING_SCAN_PACKET:
-                            
-//                             lidar->packet_buffer[lidar->packet_index++] = current_byte;
-
-                            
-//                             if (lidar->packet_index >= 5) {
-
-//                                 lidar->packet_index = 0; 
-
-//                                 uint8_t sync_quality     = lidar->packet_buffer[0];
-//                                 uint8_t angle_low_byte   = lidar->packet_buffer[1];
-//                                 uint8_t sync_bit         = (sync_quality & 0x01);
-//                                 uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;
-//                                 uint8_t check_bit        = (angle_low_byte & 0x01);
-
-                                
-//                                 if ((sync_bit != inverse_sync) && (check_bit == 1)) {
-
-                                
-//                                     if (sync_bit == 1 && lidar->total_distance_count > 10) { 
-//                                     lidar->last_avg_distance_x4 = (uint16_t)(lidar->total_distance_sum / lidar->total_distance_count);
-                                    
-//                                     char avg_msg[64];
-//                                     // 打印格式：平均距离(mm) | 有效点数
-//                                     int len = sprintf(avg_msg, "Valid Scan -> Dist: %u mm, Pts: %u\r\n", 
-//                                                 (unsigned int)(lidar->last_avg_distance_x4 / 4), 
-//                                                 (unsigned int)lidar->total_distance_count);
-                                    
-//                                     HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)avg_msg, len, 10);
-
-//                                     // 清零
-//                                     lidar->total_distance_sum = 0;
-//                                     lidar->total_distance_count = 0;
-//                                     }
-//                                     else if (sync_bit == 1) {
-//                                         // 虽然是新的一圈，但点数太少，认为是噪音，直接清零不打印
-//                                         lidar->total_distance_sum = 0;
-//                                         lidar->total_distance_count = 0;
-//                                     }
-
-                                    
-//                                     uint16_t raw_angle = (lidar->packet_buffer[2] << 8) | angle_low_byte;
-//                                     uint16_t raw_dist  = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
-//                                     uint16_t angle_data_x64 = (raw_angle >> 1);
-//                                     uint16_t dist_data_x4 = raw_dist;
-                                    
-//                                     bool angle_ok = false;
-//                                     if (lidar->filter_wrap_around) {
-//                                         angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) ||
-//                                                    (angle_data_x64 <= lidar->filter_end_angle_x64);
-//                                     } else {
-//                                         angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) &&
-//                                                    (angle_data_x64 <= lidar->filter_end_angle_x64);
-//                                     }
-
-                                    
-//                                     if (angle_ok) {
-
-//                                         uint16_t distance_to_send_x4 = 0;
-
-                                    
-//                                         bool dist_ok = (dist_data_x4 >= lidar->filter_min_dist_x4) &&
-//                                                        (dist_data_x4 <= lidar->filter_max_dist_x4);
-
-//                                         if (dist_ok) {
-                                    
-//                                             lidar->total_distance_sum += dist_data_x4;
-//                                             lidar->total_distance_count++;
-//                                             distance_to_send_x4 = dist_data_x4;
-//                                         } else {
-                                    
-                                    
-//                                             distance_to_send_x4 = lidar->last_avg_distance_x4;
-//                                         }
-
-                                    
-                                    
-//                                         // uint8_t tx_buf[6];
-//                                         // tx_buf[0] = 0xAA; // Start
-//                                         // tx_buf[1] = (angle_data_x64 & 0xFF);
-//                                         // tx_buf[2] = (angle_data_x64 >> 8) & 0xFF;
-//                                         // tx_buf[3] = (distance_to_send_x4 & 0xFF);
-//                                         // tx_buf[4] = (distance_to_send_x4 >> 8) & 0xFF;
-//                                         // tx_buf[5] = 0xBB; // Stop
-//                                         // HAL_UART_Transmit(lidar->pc_uart, tx_buf, 6, 5);
-//                                     }
-//                                 }
-//                             }
-//                             break;
-//         } // switch
-//     } // while
-// }
-#include <stdio.h>
-
-// 这里的 hlidar 应该是你 main.c 里定义的全局变量，如果报错请引用 extern RPLIDAR_Handle_t hlidar;
-extern DMA_HandleTypeDef hdma_usart1_tx; // 确保你能引用到 TX 的 DMA 句柄
-
-void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)
+void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循环中定期调用
 {
-    // 1. 计算 DMA 写指针位置
-    uint32_t dma_write_index = (LIDAR_DMA_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(lidar->lidar_dma)) % LIDAR_DMA_BUFFER_SIZE;
+    uint32_t dma_write_index = LIDAR_DMA_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(lidar->lidar_dma);
 
-    // 2. 安全计数器
-    int process_safety_count = 0; 
-    const int MAX_PROCESS_PER_LOOP = 500; // DMA发送模式下，处理能力增强，可以适当调大
-
-    while ((lidar->dma_read_index != dma_write_index) && (process_safety_count < MAX_PROCESS_PER_LOOP))
+    while (lidar->dma_read_index != dma_write_index)
     {
-        process_safety_count++; 
-
         uint8_t current_byte = lidar->dma_buffer[lidar->dma_read_index];
         lidar->dma_read_index = (lidar->dma_read_index + 1) % LIDAR_DMA_BUFFER_SIZE;
 
-        // 状态机保护
+    
         if (!lidar->is_active && lidar->state != LIDAR_STATE_IDLE) {
              lidar->state = LIDAR_STATE_IDLE;
         }
+    
         if(lidar->state == LIDAR_STATE_IDLE && !lidar->is_active){
             continue;
         }
 
+
         switch (lidar->state)
         {
-            case LIDAR_STATE_IDLE: break;
+            case LIDAR_STATE_IDLE:
+    
+                break;
 
             case WAITING_FOR_DESCRIPTOR_A5:
-                if (current_byte == 0xA5) lidar->state = WAITING_FOR_DESCRIPTOR_5A;
+                if (current_byte == 0xA5) {
+                    lidar->state = WAITING_FOR_DESCRIPTOR_5A;
+                }
                 break;
 
             case WAITING_FOR_DESCRIPTOR_5A:
@@ -254,85 +100,106 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)
                 lidar->packet_buffer[lidar->packet_index++] = current_byte;
                 if (lidar->packet_index >= 5) {
                     if (memcmp(lidar->packet_buffer, EXPECTED_SCAN_DESCRIPTOR, 5) == 0) {
+                        const char msg_ok[] = "SCAN Descriptor OK.\r\n";
+                        HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)msg_ok, sizeof(msg_ok) - 1, 20);
                         lidar->packet_index = 0;
                         lidar->state = RECEIVING_SCAN_PACKET;
                     } else {
+                        const char msg_err[] = "HATA: Gecersiz Descriptor!\r\n";
+                        HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)msg_err, sizeof(msg_err) - 1, 20);
                         lidar->state = WAITING_FOR_DESCRIPTOR_A5; 
                     }
                 }
                 break;
 
             case RECEIVING_SCAN_PACKET:
-                lidar->packet_buffer[lidar->packet_index++] = current_byte;
-
-                if (lidar->packet_index >= 5) {
-                    lidar->packet_index = 0; 
-
-                    // --- 解析官方协议字段 ---
-                    // 参考手册 LR001 图表 4-5 
-                    uint8_t sync_quality     = lidar->packet_buffer[0];
-                    uint8_t angle_low_byte   = lidar->packet_buffer[1];
-                    uint16_t raw_angle       = (lidar->packet_buffer[2] << 8) | angle_low_byte;
-                    uint16_t raw_dist        = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
-
-                    // 校验位提取
-                    uint8_t sync_bit         = (sync_quality & 0x01);
-                    uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;
-                    uint8_t check_bit        = (angle_low_byte & 0x01);
-
-                    if ((sync_bit != inverse_sync) && (check_bit == 1)) {
-                        
-                        if (sync_bit == 1) {
-                            lidar->total_distance_count = 0; // 新的一圈
-                        }
-
-                        uint16_t dist_data_x4 = raw_dist;
-
-                        if (dist_data_x4 > 0) {
-                            lidar->total_distance_count++;
-
-                            // ==============================================
-                            // 🟢 1. 数据换算 (复刻官方)
-                            // ==============================================
-                            // 角度: 去掉最后一位校验位，除以 64.0
-                            float theta = (raw_angle >> 1) / 64.0f; 
                             
-                            // 距离: 除以 4.0 (手册说明: distance_q2/4.0 mm)
-                            float dist = dist_data_x4 / 4.0f;
-                            
-                            // 质量 Q: sync_quality 的高 6 位才是质量 (去掉低2位 sync 位)
-                            uint8_t quality = (sync_quality >> 2); 
+                            lidar->packet_buffer[lidar->packet_index++] = current_byte;
 
-                            // ==============================================
-                            // 🟢 2. DMA 智能发送 (关键升级)
-                            // ==============================================
                             
-                            // 检查串口是否忙碌。如果还在发上一条，就跳过这一条，不等待！
-                            // 这样既不会阻塞 CPU，也不会因为覆盖缓冲区导致乱码。
-                            if (HAL_UART_GetState(lidar->pc_uart) == HAL_UART_STATE_READY)
-                            {
-                                // 定义一个静态缓冲区数组，轮流使用，避免覆盖
-                                static char dma_tx_buf[4][128];
-                                static int buf_index = 0;
+                            if (lidar->packet_index >= 5) {
+                                lidar->packet_index = 0; 
+
+                                uint8_t sync_quality     = lidar->packet_buffer[0];
+                                uint8_t angle_low_byte   = lidar->packet_buffer[1];
+                                uint8_t sync_bit         = (sync_quality & 0x01);
+                                uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;
+                                uint8_t check_bit        = (angle_low_byte & 0x01);
+
                                 
-                                // 格式化：完全模仿官方 SDK 输出
-                                // theta: 357.69 Dist: 00000.00 Q: 47
-                                int len = sprintf(dma_tx_buf[buf_index], "theta: %06.2f Dist: %08.2f Q: %d\r\n", 
-                                                  theta, dist, quality);
-                                
-                                // 使用 DMA 发送！CPU 此时立刻可以去处理下一个 while 循环
-                                HAL_UART_Transmit_DMA(lidar->pc_uart, (uint8_t*)dma_tx_buf[buf_index], len);
-                                
-                                // 轮转到下一个缓冲区
-                                buf_index = (buf_index + 1) % 4;
+                                if ((sync_bit != inverse_sync) && (check_bit == 1)) {
+                                    //char avg_msg[64];
+                                    if (sync_bit == 1 && lidar->total_distance_count > 10) { 
+                                    lidar->last_avg_distance_x4 = (uint16_t)(lidar->total_distance_sum / lidar->total_distance_count);
+                                        // 打印格式：平均距离(mm) | 有效点数
+                                    // int len = sprintf(avg_msg, "Dist: %u mm, Pts: %u \r\n", 
+                                    //             (unsigned int)(lidar->last_avg_distance_x4 / 4), 
+                                    //             (unsigned int)lidar->total_distance_count);
+                                    // UART_DMA_Transmit((uint8_t*)avg_msg, len);
+                                    
+                                    // 清零
+                                    //lidar->total_distance_sum = 0;
+                                    //lidar->total_distance_count = 0;
+                                    }
+                                    else if (sync_bit == 1) {
+                                        // 虽然是新的一圈，但点数太少，认为是噪音，直接清零不打印
+                                        lidar->total_distance_sum = 0;
+                                        lidar->total_distance_count = 0;
+                                    }
+
+                                    uint16_t raw_angle = (lidar->packet_buffer[2] << 8) | angle_low_byte;
+                                    uint16_t raw_dist  = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
+                                    uint16_t angle_data_x64 = (raw_angle >> 1);
+                                    uint16_t dist_data_x4 = raw_dist;
+
+                                    char ang_msg[256];
+                                    
+                                    int len = sprintf(ang_msg, "A:%u°,D:%umm\r\n", 
+                                                (unsigned int)(angle_data_x64/64), 
+                                                (unsigned int)dist_data_x4/4);
+                                    UART_DMA_Transmit((uint8_t*)ang_msg, len);
+
+                                    bool angle_ok = false;
+                                    if (lidar->filter_wrap_around) {
+                                        angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) ||
+                                                   (angle_data_x64 <= lidar->filter_end_angle_x64);
+                                    } else {
+                                        angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) &&
+                                                   (angle_data_x64 <= lidar->filter_end_angle_x64);
+                                    }
+
+                                    if (angle_ok) {
+
+                                        uint16_t distance_to_send_x4 = 0;
+                                        bool dist_ok = (dist_data_x4 >= lidar->filter_min_dist_x4) &&
+                                                       (dist_data_x4 <= lidar->filter_max_dist_x4);
+
+                                        if (dist_ok) {
+                                    
+                                            lidar->total_distance_sum += dist_data_x4;
+                                            lidar->total_distance_count++;
+                                            distance_to_send_x4 = dist_data_x4;
+                                        } else {
+                                            distance_to_send_x4 = lidar->last_avg_distance_x4;
+                                        }
+
+                                    
+                                        // uint8_t tx_buf[6];
+                                        // tx_buf[0] = 0xAA; // Start
+                                        // tx_buf[1] = (angle_data_x64 & 0xFF);
+                                        // tx_buf[2] = (angle_data_x64 >> 8) & 0xFF;
+                                        // tx_buf[3] = (distance_to_send_x4 & 0xFF);
+                                        // tx_buf[4] = (distance_to_send_x4 >> 8) & 0xFF;
+                                        // tx_buf[5] = 0xBB; // Stop
+                                        // HAL_UART_Transmit(lidar->pc_uart, tx_buf, 6, 5);
+                                    }
+                                }
                             }
-                        }
-                    }
-                }
-                break;
-        } 
-    } 
+                            break;
+        } // switch
+    } // while
 }
+
 void RPLIDAR_StartScan(RPLIDAR_Handle_t* lidar)// 开始扫描
 {
     if (!lidar || !lidar->lidar_uart) return;

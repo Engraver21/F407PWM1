@@ -107,6 +107,7 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   MX_USART6_UART_Init();
+
   /* USER CODE BEGIN 2 */
   // &hdma_usart6_rx: 串口2的DMA接收句柄 (去 usart.c 或 usart.h 确认名字，通常是这个)
   RPLIDAR_Init(&hlidar, &huart6, &huart1, &hdma_usart6_rx);
@@ -118,8 +119,10 @@ int main(void)
   // 注意：看你的库函数 RPLIDAR_StartScan 内部实现，通常它会发指令并启动接收。
   RPLIDAR_StartScan(&hlidar);//* 启动雷达扫描 */
   HAL_UART_Receive_DMA(&huart6, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
+  
   printf("System Initialized.\r\n");
-
+  uint8_t msg[] = "Hello, UART with DMA!";
+  UART_DMA_Transmit(msg, sizeof(msg)); // 使用 DMA 发送数据
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -222,7 +225,6 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     }
 }
 /* USER CODE END 4 */
-
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
