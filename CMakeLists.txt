@@ -72,3 +72,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+# 【在这里插入这一行】开启浮点数打印支持
+target_link_options(${CMAKE_PROJECT_NAME} PUBLIC -u _printf_float)

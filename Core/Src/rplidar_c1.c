@@ -1,10 +1,14 @@
 #include "rplidar_c1.h"
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h> 
 #include "usart.h" // 用于 UART 传输函数
 #include "data_pro.h"
 extern LidarData_t lidar_data[LIDAR_DATA_SIZE];
+
+uint16_t point_index = 0;// 用于存储点的索引
+volatile bool beg_co_sig = false;// 数据是否已满
 
 static const uint8_t CMD_START_SCAN[] = {0xA5, 0x20};
 static const uint8_t CMD_STOP_SCAN[]  = {0xA5, 0x25};
@@ -41,8 +45,8 @@ HAL_StatusTypeDef RPLIDAR_Init(RPLIDAR_Handle_t* lidar,
 	lidar->last_point_count = 0;
 
  
-    RPLIDAR_SetAngleFilter(lidar, 0, (360 * 64), false); // 0-360 derece
-    RPLIDAR_SetDistanceFilter(lidar, (50 * 4), (3000 * 4)); // 50mm - 3000mm
+    RPLIDAR_SetAngleFilter(lidar, 50*64, (200 * 64), false); // 0-360 derece
+    RPLIDAR_SetDistanceFilter(lidar, (10 * 4), (3000 * 4)); // 50mm - 3000mm
 
     
     if (HAL_UART_Receive_IT(lidar->pc_uart, &lidar->pc_rx_byte, 1) != HAL_OK) {
@@ -117,96 +121,57 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
             case RECEIVING_SCAN_PACKET:
                             
                             lidar->packet_buffer[lidar->packet_index++] = current_byte;
-
                             
                             if (lidar->packet_index >= 5) {
                                 lidar->packet_index = 0; 
 
-                                uint8_t sync_quality     = lidar->packet_buffer[0];
-                                uint8_t quality          = sync_quality >> 2;
-                                uint8_t angle_low_byte   = lidar->packet_buffer[1];
-                                uint8_t sync_bit         = (sync_quality & 0x01);
-                                uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;
-                                uint8_t check_bit        = (angle_low_byte & 0x01);
-
+                                uint8_t sync_quality     = lidar->packet_buffer[0];//扫描起始位和质量
+                                uint8_t quality          = sync_quality >> 2;       //取出质量
+                                uint8_t angle_low_byte   = lidar->packet_buffer[1];//低六位角度
+                                uint8_t sync_bit         = (sync_quality & 0x01);   //正起始位
+                                uint8_t inverse_sync     = (sync_quality & 0x02) >> 1;//负起始位
+                                uint8_t check_bit        = (angle_low_byte & 0x01);  //校验位
                                 
-                                if ((sync_bit != inverse_sync) && (check_bit == 1)) {
-                                    //char avg_msg[64];
-                                    if (sync_bit == 1 && lidar->total_distance_count > 10) { 
-                                    lidar->last_avg_distance_x4 = (uint16_t)(lidar->total_distance_sum / lidar->total_distance_count);
-                                    }
-                                    else if (sync_bit == 1) {
-                                        // 虽然是新的一圈，但点数太少，认为是噪音，直接清零不打印
-                                        uint8_t * S = (uint8_t *) "T ";
-                                        UART_DMA_Transmit((uint8_t*)S, strlen(S));
-                                        lidar->total_distance_sum = 0;
-                                        lidar->total_distance_count = 0;
+                                if ((sync_bit != inverse_sync) && (check_bit == 1)) {//校验成功
+                                    if (sync_bit == 1) {//打印新的一圈
                                     }
 
-                                    uint16_t raw_angle = (lidar->packet_buffer[2] << 8) | angle_low_byte;
-                                    uint16_t raw_dist  = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];
-                                    uint16_t angle_data_x64 = (raw_angle >> 1);
-                                    uint16_t dist_data_x4 = raw_dist;
-                                    static uint16_t point_index = 0;// 用于存储点的索引
-                                    // uint8_t  msg[64];
-                                    lidar_data[point_index].angle = angle_data_x64;// 存储角度
-                                    lidar_data[point_index].distance = dist_data_x4;// 存储距离
-                                    lidar_data[point_index].quality = quality;// 存储质量
+                                    uint16_t raw_angle = (lidar->packet_buffer[2] << 8) | angle_low_byte;//低七位高八位全部计算
+                                    uint16_t raw_dist  = (lidar->packet_buffer[4] << 8) | lidar->packet_buffer[3];//计算距离
+                                    uint16_t angle_data_x64 = (raw_angle >> 1);//计算正确的角度数据64倍，使用需要除以64
+                                    uint16_t dist_data_x4 = raw_dist;//正确距离四倍，使用除以4
+
                                     
-                                    // int len  = sprintf(msg, "inf:%u,%u\r\n",
-                                    // lidar_data[point_index].angle,
-                                    // lidar_data[point_index].distance,
-                                    // lidar_data[point_index].quality
-                                    // );
-                                    // UART_DMA_Transmit(msg,len);
-
-
-                                    point_index++;// 增加索引
-
-                                    if (point_index>=LIDAR_DATA_SIZE) {// 循环存储
-                                        point_index = 0;
-                                    }
-
-                                    lidar->total_distance_sum = 0;
-                                    lidar->total_distance_count = 0;
-
                                     bool angle_ok = false;
-                                    if (lidar->filter_wrap_around) {
-                                        angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) ||
-                                                   (angle_data_x64 <= lidar->filter_end_angle_x64);
+                                    if (lidar->filter_wrap_around) {//角度过滤器
+                                        angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) ||//测量的角度小于起始角度
+                                                   (angle_data_x64 <= lidar->filter_end_angle_x64);//或者侧量的角度大于末尾角度
                                     } else {
-                                        angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) &&
-                                                   (angle_data_x64 <= lidar->filter_end_angle_x64);
+                                        angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) &&//测量的角度大于起始角度
+                                                   (angle_data_x64 <= lidar->filter_end_angle_x64);//并且测量的角度小于末尾角度
                                     }
 
-                                    if (angle_ok) {
+                                     if (angle_ok) {//角度在过滤的范围内
+                                        {
+                                            point_index++;
+                                            lidar_data[point_index].angle = angle_data_x64;
+                                            lidar_data[point_index].distance = dist_data_x4;
+                                            lidar_data[point_index].quality = quality;
 
-                                        uint16_t distance_to_send_x4 = 0;
-                                        bool dist_ok = (dist_data_x4 >= lidar->filter_min_dist_x4) &&
-                                                       (dist_data_x4 <= lidar->filter_max_dist_x4);
-
-                                        if (dist_ok) {
-                                    
-                                            lidar->total_distance_sum += dist_data_x4;
-                                            lidar->total_distance_count++;
-                                            distance_to_send_x4 = dist_data_x4;
-                                        } else {
-                                            distance_to_send_x4 = lidar->last_avg_distance_x4;
+                                            if (point_index==255) {
+                                                beg_co_sig = true;
+                                                return;
+                                            }
                                         }
 
-                                    
-                                        // uint8_t tx_buf[6];
-                                        // tx_buf[0] = 0xAA; // Start
-                                        // tx_buf[1] = (angle_data_x64 & 0xFF);
-                                        // tx_buf[2] = (angle_data_x64 >> 8) & 0xFF;
-                                        // tx_buf[3] = (distance_to_send_x4 & 0xFF);
-                                        // tx_buf[4] = (distance_to_send_x4 >> 8) & 0xFF;
-                                        // tx_buf[5] = 0xBB; // Stop
-                                        // HAL_UART_Transmit(lidar->pc_uart, tx_buf, 6, 5);
+                                    //     bool dist_ok = (dist_data_x4 >= lidar->filter_min_dist_x4) &&//距离过滤器
+                                    //     (dist_data_x4 <= lidar->filter_max_dist_x4);
+                                    //     if (dist_ok) {
+                                    //     }
                                     }
                                 }
-                            }
-                            break;
+                            }//if (packet_index >= 5)
+                        break;
         } // switch
     } // while
 }
@@ -219,7 +184,6 @@ void RPLIDAR_StartScan(RPLIDAR_Handle_t* lidar)// 开始扫描
     lidar->packet_index = 0;
     lidar->state = WAITING_FOR_DESCRIPTOR_A5;
 
-    
     lidar->total_distance_sum = 0;
     lidar->total_distance_count = 0;
     lidar->new_revolution = false;
@@ -274,10 +238,7 @@ void RPLIDAR_RxCallback(RPLIDAR_Handle_t* lidar, UART_HandleTypeDef *huart)// PC
              const char msg_stop[] = "LIDAR Durduruldu.\r\n";
              HAL_UART_Transmit(lidar->pc_uart, (uint8_t*)msg_stop, sizeof(msg_stop)-1, 10);
         }
-
-    
         HAL_UART_Receive_IT(lidar->pc_uart, &lidar->pc_rx_byte, 1);
     }
-    
     
 }
