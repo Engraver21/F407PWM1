@@ -45,9 +45,9 @@ HAL_StatusTypeDef RPLIDAR_Init(RPLIDAR_Handle_t* lidar,
 	lidar->last_point_count = 0;
 
  
-    RPLIDAR_SetAngleFilter(lidar, 50*64, (200 * 64), false); // 0-360 derece
+    RPLIDAR_SetAngleFilter(lidar, 150*64, (210 * 64), false); // 0-360 derece
     RPLIDAR_SetDistanceFilter(lidar, (10 * 4), (3000 * 4)); // 50mm - 3000mm
-
+    RPLIDAR_SetQualityFilter( lidar, 15);//设置质量过滤器
     
     if (HAL_UART_Receive_IT(lidar->pc_uart, &lidar->pc_rx_byte, 1) != HAL_OK) {
         return HAL_ERROR;
@@ -143,6 +143,7 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
 
                                     
                                     bool angle_ok = false;
+
                                     if (lidar->filter_wrap_around) {//角度过滤器
                                         angle_ok = (angle_data_x64 >= lidar->filter_start_angle_x64) ||//测量的角度小于起始角度
                                                    (angle_data_x64 <= lidar->filter_end_angle_x64);//或者侧量的角度大于末尾角度
@@ -151,8 +152,14 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
                                                    (angle_data_x64 <= lidar->filter_end_angle_x64);//并且测量的角度小于末尾角度
                                     }
 
-                                     if (angle_ok) {//角度在过滤的范围内
-                                        {
+                                    bool dist_ok = (dist_data_x4 >= lidar->filter_min_dist_x4) &&//距离过滤器
+                                    (dist_data_x4 <= lidar->filter_max_dist_x4);
+
+                                    bool quality_ok  = false;
+                                    quality_ok = (quality >= lidar->lid_min_quality);
+
+                                    
+                                    if (dist_ok && angle_ok && quality_ok) {
                                             point_index++;
                                             lidar_data[point_index].angle = angle_data_x64;
                                             lidar_data[point_index].distance = dist_data_x4;
@@ -162,20 +169,15 @@ void RPLIDAR_Process(RPLIDAR_Handle_t* lidar)// 主处理函数，需在主循�
                                                 beg_co_sig = true;
                                                 return;
                                             }
-                                        }
 
-                                    //     bool dist_ok = (dist_data_x4 >= lidar->filter_min_dist_x4) &&//距离过滤器
-                                    //     (dist_data_x4 <= lidar->filter_max_dist_x4);
-                                    //     if (dist_ok) {
-                                    //     }
-                                    }
+                                        }
+                                    
                                 }
                             }//if (packet_index >= 5)
                         break;
         } // switch
     } // while
 }
-
 void RPLIDAR_StartScan(RPLIDAR_Handle_t* lidar)// 开始扫描
 {
     if (!lidar || !lidar->lidar_uart) return;
@@ -220,6 +222,13 @@ void RPLIDAR_SetDistanceFilter(RPLIDAR_Handle_t* lidar,
     if (!lidar) return;
     lidar->filter_min_dist_x4 = min_dist_x4;
     lidar->filter_max_dist_x4 = max_dist_x4;
+}
+
+void RPLIDAR_SetQualityFilter(RPLIDAR_Handle_t* lidar,
+                               uint16_t min_quality)// 设置距离过滤器参数
+{
+    if (!lidar) return;
+    lidar->lid_min_quality = min_quality;
 }
 
 void RPLIDAR_RxCallback(RPLIDAR_Handle_t* lidar, UART_HandleTypeDef *huart)// PC UART 接收回调

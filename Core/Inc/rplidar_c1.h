@@ -50,6 +50,7 @@ typedef struct {
         volatile bool       new_revolution;     // 当完成新的一圈时变为 'true'
         volatile uint16_t   last_avg_distance_x4; // 计算出的上一次平均距离 (x4)
         volatile uint16_t   last_point_count;     // 上一次平均计算中使用的点数
+        volatile uint16_t   lid_min_quality;      // 最小点质量
 } RPLIDAR_Handle_t;
 
 // --- 库函数 ---
@@ -82,6 +83,14 @@ void RPLIDAR_StartScan(RPLIDAR_Handle_t* lidar);
  */
 void RPLIDAR_StopScan(RPLIDAR_Handle_t* lidar);
 
+/**
+ * @brief 设置质量过滤器参数。
+ * @param lidar: RPLIDAR_Handle_t 结构体指针。
+ * @param min_quality: 最小质量。
+
+ */
+void RPLIDAR_SetQualityFilter(RPLIDAR_Handle_t* lidar,
+                               uint16_t min_quality);// 设置距离过滤器参数
 /**
  * @brief 设置角度过滤器参数。
  * @param lidar: RPLIDAR_Handle_t 结构体指针。
