@@ -68,6 +68,10 @@ int _write(int file, char *ptr, int len)
 RPLIDAR_Handle_t hlidar; // 定义雷达控制句柄
 extern DMA_HandleTypeDef hdma_usart6_rx;
 extern DMA_HandleTypeDef hdma_usart6_tx;
+
+extern int objects_fed_count;              // 告诉外部有多少个有效物体
+extern bool data_is_ready;             // 可选：数据更新完成标志
+extern LidarObject_t objects_fed[MAX_OBJECTS];// 用于存储识别到的物体信息
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -160,6 +164,7 @@ int main(void)
     RPLIDAR_Process(&hlidar); // 定期调用雷达处理函数
     //data_collect(writing_ptr, ready_point_count);
     Lidar_Analyze_Objects(reading_ptr, ready_point_count);
+    other_prtocess(objects_fed_count,objects_fed,data_is_ready);
     key = key_scan(0);
     if(key==KEY0_PRES){
       RPLIDAR_StartScan(&hlidar);//启动雷达信息
@@ -265,11 +270,9 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
             __HAL_UART_CLEAR_NEFLAG(huart);
             __HAL_UART_CLEAR_FEFLAG(huart);
             __HAL_UART_CLEAR_PEFLAG(huart);
-
             // 遇到严重错误，建议强行重启 DMA
             // 先停止，以防万一
             HAL_UART_DMAStop(huart); 
-            
             // 重新开始接收
             HAL_UART_Receive_DMA(huart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
         }

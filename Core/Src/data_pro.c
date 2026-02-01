@@ -24,6 +24,10 @@ LidarData_t lidar_buffer_B[LIDAR_MAX_POINTS];
 LidarData_t* writing_ptr = lidar_buffer_A;
 LidarData_t* reading_ptr = lidar_buffer_B;
 
+LidarObject_t objects_fed[MAX_OBJECTS];// 用于存储识别到的物体信息
+int objects_fed_count = 0;              // 告诉外部有多少个有效物体
+bool data_is_ready = false;             // 可选：数据更新完成标志
+
 uint16_t ready_point_count = 0;
 volatile bool beg_co_sig = false;
 void data_collect(LidarData_t* lid, uint16_t count) {
@@ -61,9 +65,10 @@ float dist_sq(float x1, float y1, float x2, float y2) {
 
 void Lidar_Analyze_Objects(LidarData_t* buffer, uint16_t count) {
     // 1. 初始化
+
     LidarObject_t objects[MAX_OBJECTS];
     int obj_count = 0; // 当前找到的物体数量
-
+    data_is_ready = false;
     // 聚类临时变量
     float sum_x = 0, sum_y = 0;
     int current_pts = 0;
@@ -138,15 +143,38 @@ void Lidar_Analyze_Objects(LidarData_t* buffer, uint16_t count) {
         // 2. 【关键】必须在这里也算一次距离！
         objects[obj_count].distance = sqrtf(objects[obj_count].x * objects[obj_count].x + 
                                             objects[obj_count].y * objects[obj_count].y);
-        
         obj_count++; // 结算完成
     }
 
 
     // --- 打印输出 ---
-    printf("Found %d objects:\n", obj_count);
+    //printf("Found %d objects:\n", obj_count);
     for(int k=0; k<obj_count; k++) {
-        // 这里的 Dist 现在肯定有值了
-        printf("Obj%d: X:%.1f Y:%.1f Dist:%.1f\n", k, objects[k].x, objects[k].y, objects[k].distance);
+        objects_fed[k] = objects[k];
+        //printf("Obj%d: X:%.1f Y:%.1f Dist:%.1f\n", k, objects[k].x, objects[k].y, objects[k].distance);
     }
+
+    // 3. 【最重要的一步】更新全局数量
+    // 只有这行代码执行后，外部程序才知道有 obj_count 个新数据可用
+    objects_fed_count = obj_count; 
+    // 4. (可选) 置位标志，通知主循环可以取数据了
+    if (obj_count==0) {
+        data_is_ready = false;
+    
+    }else {
+        data_is_ready = true;
+    }
+}
+void other_prtocess(uint16_t count, LidarObject_t buffer[],bool complete_sig)
+{
+
+    if (complete_sig) {
+        printf("Found %d objects:\n", count);
+        for(int k=0; k<objects_fed_count; k++) {
+            printf("Obj%d: X:%.1f Y:%.1f Dist:%.1f\n", k, objects_fed[k].x, objects_fed[k].y, objects_fed[k].distance);
+        }
+    }else {
+        printf("we can`t find any objects,wait some times or press reset !!!\r\n");
+    }
+    
 }

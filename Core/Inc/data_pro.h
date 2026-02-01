@@ -44,7 +44,8 @@ extern volatile bool beg_co_sig;   // 一圈完成标志
 void data_collect(LidarData_t* lid, uint16_t count);
 // 新增：识别物体
 void Lidar_Analyze_Objects(LidarData_t* buffer, uint16_t count);
-
+// 新增：其他处理函数
+void other_prtocess(uint16_t count, LidarObject_t buffer[],bool complete_sig);
 
 
 #endif /* DATA_PRO_H_ */
