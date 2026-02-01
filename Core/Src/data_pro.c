@@ -4,142 +4,149 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 #include <math.h>
 #include <stdlib.h>
 #include "rplidar_c1.h"
-// 创建一个结构体变量
-LidarData_t lidar_data[LIDAR_DATA_SIZE] = {0};
+
 extern  uint16_t point_index ;// 用于存储点的索引
 
-// 定义 PI，如果 math.h 里没有定义 M_PI
-#ifndef M_PI
-#define M_PI 3.1415926f
-#endif
+// 建议将常数提取，增加运算效率
+#define RPLIDAR_ANG_SCALE  64.0f
+#define RPLIDAR_DIST_SCALE 4.0f
+#define DEG2RAD            0.0174532925f // (PI / 180.0f)
 
-void data_collect(LidarData_t lid[], uint16_t count)
-{
-    // VOFA+ 不需要 "--- New Scan ---" 这种文本头，
-    // 如果你保留它，VOFA+ 会把它当做日志忽略，不影响绘图，但建议注释掉以节省带宽
-    // printf("--- New Scan: %d points ---\r\n", count);
-    
-    for (int i = 0; i < count; i++) { 
-        
-        // 1. 过滤无效点 (质量为0 或者 距离为0)
-        if (lid[i].quality > 0 && lid[i].distance > 0) {
+// 实际开辟内存空间
+LidarData_t lidar_buffer_A[LIDAR_MAX_POINTS];
+LidarData_t lidar_buffer_B[LIDAR_MAX_POINTS];
+
+// 初始化指针指向
+LidarData_t* writing_ptr = lidar_buffer_A;
+LidarData_t* reading_ptr = lidar_buffer_B;
+
+uint16_t ready_point_count = 0;
+volatile bool beg_co_sig = false;
+void data_collect(LidarData_t* lid, uint16_t count) {
+    for (int i = 0; i < count; i++) {
+        // 1. 过滤无效点：思岚 A1 的距离为 0 或品质分度不够时应跳过
+        // 注：lid[i].distance 是原始 16 位数据，低 2 位是 Check 位，高 14 位是距离
+        // 如果你的底层驱动已经处理了移位，则直接判断 > 0
+        if (lid[i].distance > 0) {
             
-            // 2. 转换为浮点数实际值
-            // 角度: Q6格式 -> 实际度数
-            float angle_deg = lid[i].angle / 64.0f; 
-            
-            // 距离: Q2格式 -> 毫米
-            float dist_mm = lid[i].distance / 4.0f;
+            // 2. 转换为实际物理量
+            float angle_deg = (float)lid[i].angle / RPLIDAR_ANG_SCALE;
+            float dist_mm   = (float)lid[i].distance / RPLIDAR_DIST_SCALE;
 
-            // 3. 极坐标转直角坐标 (Polar -> Cartesian)
-            // math.h 的三角函数使用弧度制，所以需要 角度 * PI / 180
-            float angle_rad = angle_deg * M_PI / 180.0f;
+            // 3. 极坐标转直角坐标（修正顺时针镜像问题）
+            // 思岚 A1 顺时针旋转，为了在绘图软件中得到正向图形：
+            // 方案 A：使用 360 - angle
+            // 方案 B：直接在 sin 计算时加负号
+            float angle_rad = angle_deg * DEG2RAD;
 
-            // 计算 X, Y
-            // 注意：这是标准数学坐标系。
-            // 如果你在 VOFA+ 里看到图是歪的，可以尝试交换 sin/cos 或加负号
-            float x = dist_mm * cos(angle_rad);
-            float y = dist_mm * sin(angle_rad);
+            float x = dist_mm * cosf(angle_rad);
+            float y = dist_mm * sinf(angle_rad); // 加负号修正镜像
 
-            // 4. 【关键】使用 FireWater 协议格式打印
-            // 格式： "X坐标,Y坐标\n"
-            // %.1f 保留1位小数足够了，节省串口带宽
-            printf("%.1f,%.1f\n", x, y); 
+            // 4. VOFA+ FireWater 协议：X,Y\n
+            printf("%.2f,%.2f\n", x, y);
         }
     }
-    
-    // VOFA+ 同样不需要结束符，为了干净的数据流，建议注释掉
-    // printf("--- End ---\r\n");
 }
 
 
-DetectedObject_t objects[MAX_OBJECTS];
-uint8_t object_count = 0;
+// 辅助：计算两点距离平方（不开根号，速度快）
+float dist_sq(float x1, float y1, float x2, float y2) {
+    return (x1 - x2)*(x1 - x2) + (y1 - y2)*(y1 - y2);
+}
 
-void Find_Objects(LidarData_t* data, uint16_t total_points) {
-    object_count = 0;// 重置对象计数器
-    
-    // 临时变量，用于记录当前正在跟踪的物体
-    uint16_t current_obj_start_idx = 0;// 当前正在处理的物体的起始索引
-    uint16_t current_obj_point_count = 0;// 当前正在处理的物体的点数
-    float current_obj_dist_sum = 0;// 当前正在处理的物体的距离和
-    float current_obj_min_dist = 10000.0f;// 当前正在处理的物体的最小距离
-    
-    // 简单的状态机：0=寻找新物体, 1=正在记录物体
-    uint8_t state = 0; 
 
-    for (int i = 1; i < total_points; i++) {//
-        // 1. 获取当前点和上一个点的距离
-        float dist_curr = data[i].distance / 4.0f;     // 转换为毫米
-        float dist_prev = data[i-1].distance / 4.0f;   // 毫秒
-        float angle_curr = data[i].angle / 64.0f;       // 度
-        float angle_prev = data[i-1].angle / 64.0f;     // 度
+void Lidar_Analyze_Objects(LidarData_t* buffer, uint16_t count) {
+    // 1. 初始化
+    LidarObject_t objects[MAX_OBJECTS];
+    int obj_count = 0; // 当前找到的物体数量
 
-        // 过滤掉无效点 (距离为0)
-        if (dist_curr < 10 || dist_prev < 10) continue;
+    // 聚类临时变量
+    float sum_x = 0, sum_y = 0;
+    int current_pts = 0;
+    float last_x = 0, last_y = 0;
 
-        // 2. 计算跳变
-        float dist_diff = abs(dist_curr - dist_prev);//计算两点之间的距离差
-        float angle_diff = angle_curr - angle_prev;// 计算角度差
-        if(angle_diff < 0) angle_diff += 360; // 处理过零点情况
+    // 清空对象数组，防止残留数据
+    memset(objects, 0, sizeof(objects));
 
-        // 判断是否属于同一个物体：距离跳变小 且 角度连续（例如断层不大于5度）
-        bool is_same_object = (dist_diff < GAP_THRESHOLD) && (angle_diff < 5.0f);
+    for (int i = 0; i < count; i++) {
+        // --- 过滤无效点 ---
+        if (buffer[i].distance == 0) continue; 
 
-        if (state == 0) {
-            // 状态：开始新物体
-            current_obj_start_idx = i - 1; // 从上一个点开始算
-            current_obj_point_count = 1;    //当前物体的点数
-            current_obj_dist_sum = dist_prev;// 当前物体的距离和
-            current_obj_min_dist = dist_prev;// 当前物体的最小距离
-            state = 1;                      // 进入状态：正在记录物体
+        // --- 坐标转换 ---
+        float angle_deg = buffer[i].angle / 64.0f;
+        float dist_mm   = buffer[i].distance / 4.0f;
+        float angle_rad = angle_deg * 0.01745329f; // PI / 180
+
+        // 坐标系修正 (根据你的情况 X, Y)
+        float x = dist_mm * cosf(angle_rad);
+        float y = -dist_mm * sinf(angle_rad); 
+
+        // --- 聚类逻辑 ---
+        if (current_pts == 0) {
+            // 新簇的第一个点
+            sum_x = x;
+            sum_y = y;
+            current_pts = 1;
         } 
-        else if (state == 1) { // 状态：正在记录物体
-            if (is_same_object) {// 还是同一个物体，累加数据
-                current_obj_point_count++;// 当前物体的点数加1
-                current_obj_dist_sum += dist_curr;// 当前物体的距离和加当前点
-                if (dist_curr < current_obj_min_dist) // 更新最小距离
-                current_obj_min_dist = dist_curr;
+        else {
+            // 计算与上一个点的距离平方
+            float d2 = (x - last_x)*(x - last_x) + (y - last_y)*(y - last_y);
+            
+            if (d2 < (CLUSTER_THRESHOLD * CLUSTER_THRESHOLD)) {
+                // 距离很近，属于同一个物体 -> 累加
+                sum_x += x;
+                sum_y += y;
+                current_pts++;
             } 
             else {
-                // 跳变发生！上一个物体结束了
-                // 只有当点数足够多时，才算有效物体（过滤噪点）
-                if (current_obj_point_count >= MIN_POINTS) {// 至少有3个点
-                    if (object_count < MAX_OBJECTS) {// 最多只保存10个物体
-                        objects[object_count].id = object_count + 1;
-                        // 计算中心角度 = (起始角 + 结束角) / 2
-                        float start_ang = data[current_obj_start_idx].angle / 64.0f;
-                        float end_ang = data[i-1].angle / 64.0f;
-                        
-                        // 简单的角度平均处理（注意360度过零问题这里暂简略处理）
-                        objects[object_count].angle_center = (start_ang + end_ang) / 2.0f;
-                        
-                        objects[object_count].distance_min = current_obj_min_dist;
-                        objects[object_count].distance_avg = current_obj_dist_sum / current_obj_point_count;
-                        objects[object_count].point_count = current_obj_point_count;
-                        
-                        object_count++;
-                    }
+                // --- 距离突变！结算【上一个】物体 (例如 Obj0, Obj1) ---
+                if (current_pts >= MIN_POINTS_PER_OBJ && obj_count < MAX_OBJECTS) {
+                    objects[obj_count].x = sum_x / current_pts;
+                    objects[obj_count].y = sum_y / current_pts;
+                    objects[obj_count].points = current_pts;
+                    // 计算距离
+                    objects[obj_count].distance = sqrtf(objects[obj_count].x * objects[obj_count].x + 
+                                                        objects[obj_count].y * objects[obj_count].y);
+                    obj_count++; // 索引加1
                 }
-                // 重置状态，开始判断当前点是不是下一个物体的起点
-                state = 0; 
-                // 为了简单，不回退i，直接让下一次循环处理新物体
+                
+                // 开启【新】物体 (例如开始 Obj2)
+                sum_x = x;
+                sum_y = y;
+                current_pts = 1;
             }
         }
+        
+        last_x = x;
+        last_y = y;
     }
-}
 
-// 打印识别结果
-void Print_Objects() {
-    printf("\r\n=== DETECTED %d OBJECTS ===\r\n", object_count);
-    for (int k = 0; k < object_count; k++) {
-        printf("OBJ#%d: Angle:%.1f deg, Dist:%.0f mm (Width/Pts:%d)\r\n", 
-            objects[k].id, 
-            objects[k].angle_center, 
-            objects[k].distance_min,
-            objects[k].point_count);
+    // ==========================================================
+    // 【核心修正点】: 循环结束后的收尾工作
+    // 这里专门负责结算【最后一个物体】(也就是你的 Obj2)
+    // ==========================================================
+    if (current_pts >= MIN_POINTS_PER_OBJ && obj_count < MAX_OBJECTS) {
+        // 1. 存入 X 和 Y
+        objects[obj_count].x = sum_x / current_pts;
+        objects[obj_count].y = sum_y / current_pts;
+        objects[obj_count].points = current_pts;
+        
+        // 2. 【关键】必须在这里也算一次距离！
+        objects[obj_count].distance = sqrtf(objects[obj_count].x * objects[obj_count].x + 
+                                            objects[obj_count].y * objects[obj_count].y);
+        
+        obj_count++; // 结算完成
+    }
+
+
+    // --- 打印输出 ---
+    printf("Found %d objects:\n", obj_count);
+    for(int k=0; k<obj_count; k++) {
+        // 这里的 Dist 现在肯定有值了
+        printf("Obj%d: X:%.1f Y:%.1f Dist:%.1f\n", k, objects[k].x, objects[k].y, objects[k].distance);
     }
 }

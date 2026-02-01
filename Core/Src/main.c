@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "dma.h"
+#include "iwdg.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -42,17 +43,18 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 uint32_t key=0;
-extern LidarData_t lidar_data[LIDAR_DATA_SIZE];
-extern  uint16_t point_index ;// 用于存储点的索引
-extern volatile bool beg_co_sig;
-
-volatile bool is_one_scan_ready; 
-uint16_t volatile total_points_captured;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+// 重写 _write 函数 (GCC/STM32CubeIDE 专用)
+int _write(int file, char *ptr, int len)
+{
+    // 使用阻塞模式发送，确保数据发送完成
+    // 注意：不要在这里使用 DMA，因为 printf 调用频率高时 DMA 会因为 BUSY 而丢包
+    HAL_UART_Transmit(&huart1, (uint8_t *)ptr, len, 1000);
+    return len;
+}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -115,23 +117,37 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   MX_USART6_UART_Init();
-
+  MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
+  delay_init(168);// 初始化延时函数，参数为系统时钟频率MHz
   // &hdma_usart6_rx: 串口2的DMA接收句柄 (去 usart.c 或 usart.h 确认名字，通常是这个)
   RPLIDAR_Init(&hlidar, &huart6, &huart1, &hdma_usart6_rx);
-  delay_init(168);// 初始化延时函数，参数为系统时钟频率MHz
  // Ball_Screw_init(); // 初始化滚珠丝杠
+  RPLIDAR_StartScan(&hlidar);//* 启动雷达扫描 */
+ // HAL_Delay(500); // 给它一点时间反应
+  if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET)
+  {
+    // 这里的字符串就是你要的信息
+    printf("\r\n===================================\r\n");
+    printf("[警告] 系统刚刚因为看门狗超时(死机)而重启！\r\n");
+    printf("===================================\r\n");
+
+    delay_ms(1000);
+    __HAL_RCC_CLEAR_RESET_FLAGS();
+  }
+  else
+  {
+    printf("\r\n[信息] 系统正常上电启动。\r\n");  
+  }
 
   // 2. 启动 DMA 接收 (这一步非常重要，你的库底层应该封装了 HAL_UART_Receive_DMA)
   // 如果 RPLIDAR_Init 里没调用 HAL_UART_Receive_DMA，你需要在这里手动调用：
   // 注意：看你的库函数 RPLIDAR_StartScan 内部实现，通常它会发指令并启动接收。
-  RPLIDAR_StartScan(&hlidar);//* 启动雷达扫描 */
-  HAL_UART_Receive_DMA(&huart6, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
-  
-  // printf("System Initialized.\r\n");
-  // uint8_t msg[] = "Hello, UART with DMA!";
-  // UART_DMA_Transmit(msg, sizeof(msg)); // 使用 DMA 发送数据
-  RPLIDAR_StartScan(&hlidar);
+
+  printf("Before UART transmission\r\n");
+  HAL_UART_Transmit(&huart1, (uint8_t*)"Test message.\r\n", 15, HAL_MAX_DELAY);
+  printf("After UART transmission\r\n");
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -139,27 +155,21 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
     RPLIDAR_Process(&hlidar); // 定期调用雷达处理函数
-    if (beg_co_sig == true) {
-      data_collect(lidar_data, point_index);
-      point_index  =0;
-      //printf("收到新的一圈\r\n");
-      beg_co_sig = false;
+    //data_collect(writing_ptr, ready_point_count);
+    Lidar_Analyze_Objects(reading_ptr, ready_point_count);
+    key = key_scan(0);
+    if(key==KEY0_PRES){
+      RPLIDAR_StartScan(&hlidar);//启动雷达信息
+      printf("Start Scan\r\n");
+    }else if(key==KEY1_PRES){
+      //  Ball_Screw_move_a_step(0); // 滚珠丝杠反转一步{
+      RPLIDAR_StopScan(&hlidar);//停止雷达信息
+      printf("Stop Scan\r\n");
     }
-    // 2. [新增] 串口“起搏器”：检查串口是否因为错误而挂起了
-    if (hlidar.lidar_uart->ErrorCode != HAL_UART_ERROR_NONE)
-    {
-        // 如果有错误，强制清除并重启
-        HAL_UART_AbortReceive(hlidar.lidar_uart);
-        HAL_UART_Receive_DMA(hlidar.lidar_uart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
-    }
-    
-    // 3. [新增] 如果 DMA 悄悄停了 (State 不是 BUSY_RX)，也重启它
-    if (hlidar.lidar_uart->RxState == HAL_UART_STATE_READY)
-    {
-          HAL_UART_Receive_DMA(hlidar.lidar_uart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
-    }
+    HAL_IWDG_Refresh(&hiwdg); // 喂狗
   }
   /* USER CODE END 3 */
 }
@@ -181,8 +191,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
@@ -218,27 +229,54 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   RPLIDAR_RxCallback(&hlidar, huart);
 }
 
+// void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+// {
+//     // 判断是不是雷达的串口 (假设是 huart6)
+//     // 如果你的雷达是 huart2，请改为 huart2
+//     if (huart->Instance == USART6) 
+//     {
+//         // 1. 发生错误了（比如 Overrun），先停止之前的 DMA
+//         HAL_UART_DMAStop(huart);
+
+//         // 2. 重新开启 DMA 接收！(这步最关键，让它继续干活)
+//         // 注意：这里需要引用你的全局变量 hlidar
+//         extern RPLIDAR_Handle_t hlidar; 
+        
+//         // 重新启动接收，覆盖缓冲区
+//         HAL_UART_Receive_DMA(huart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
+        
+//         // 可选：重置读指针，防止处理脏数据
+//         // hlidar.dma_read_index = 0; 
+//     }
+// }
+
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    // 判断是不是雷达的串口 (假设是 huart6)
-    // 如果你的雷达是 huart2，请改为 huart2
-    if (huart->Instance == USART6) 
+    if (huart->Instance == USART6)
     {
-        // 1. 发生错误了（比如 Overrun），先停止之前的 DMA
-        HAL_UART_DMAStop(huart);
+        uint32_t isrflags = huart->Instance->SR; // 读取状态寄存器
+        
+        // 检查各种错误标志 (ORE:溢出, NE:噪声, FE:帧错误, PE:校验错误)
+        if ((isrflags & (UART_FLAG_ORE | UART_FLAG_NE | UART_FLAG_FE | UART_FLAG_PE)) != RESET)
+        {
+            // 读取 DR 寄存器通常可以清除这些错误标志 (STM32 F4/F1 特性)
+            // 或者使用宏清除
+            __HAL_UART_CLEAR_OREFLAG(huart);
+            __HAL_UART_CLEAR_NEFLAG(huart);
+            __HAL_UART_CLEAR_FEFLAG(huart);
+            __HAL_UART_CLEAR_PEFLAG(huart);
 
-        // 2. 重新开启 DMA 接收！(这步最关键，让它继续干活)
-        // 注意：这里需要引用你的全局变量 hlidar
-        extern RPLIDAR_Handle_t hlidar; 
-        
-        // 重新启动接收，覆盖缓冲区
-        HAL_UART_Receive_DMA(huart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
-        
-        // 可选：重置读指针，防止处理脏数据
-        // hlidar.dma_read_index = 0; 
+            // 遇到严重错误，建议强行重启 DMA
+            // 先停止，以防万一
+            HAL_UART_DMAStop(huart); 
+            
+            // 重新开始接收
+            HAL_UART_Receive_DMA(huart, hlidar.dma_buffer, LIDAR_DMA_BUFFER_SIZE);
+        }
     }
 }
 /* USER CODE END 4 */
+
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None

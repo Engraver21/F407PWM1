@@ -49,7 +49,7 @@ void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 460800*2;
+  huart1.Init.BaudRate = 921600;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -130,7 +130,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_usart1_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_usart1_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
     hdma_usart1_tx.Init.Mode = DMA_NORMAL;
-    hdma_usart1_tx.Init.Priority = DMA_PRIORITY_LOW;
+    hdma_usart1_tx.Init.Priority = DMA_PRIORITY_VERY_HIGH;
     hdma_usart1_tx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_usart1_tx) != HAL_OK)
     {
@@ -193,8 +193,8 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_usart6_rx.Init.MemInc = DMA_MINC_ENABLE;
     hdma_usart6_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_usart6_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-    hdma_usart6_rx.Init.Mode = DMA_NORMAL;
-    hdma_usart6_rx.Init.Priority = DMA_PRIORITY_LOW;
+    hdma_usart6_rx.Init.Mode = DMA_CIRCULAR;
+    hdma_usart6_rx.Init.Priority = DMA_PRIORITY_VERY_HIGH;
     hdma_usart6_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_usart6_rx) != HAL_OK)
     {
@@ -278,22 +278,11 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
     /* USART6 interrupt Deinit */
     HAL_NVIC_DisableIRQ(USART6_IRQn);
   /* USER CODE BEGIN USART6_MspDeInit 1 */
-
+    
   /* USER CODE END USART6_MspDeInit 1 */
   }
 }
-// 尝试启动发送
-void UART_DMA_Transmit(uint8_t *data, uint16_t len)
-{
-   HAL_UART_Transmit_DMA(&huart1, data, len);
-}
 
+/* USER CODE BEGIN 1 */
 
-// 重定向 printf 到 UART1 (阻塞模式)
-int _write(int file, char *ptr, int len)
-{
-    // 这里的 huart1 是 usart.c 内部定义的全局变量，直接用即可
-    HAL_UART_Transmit(&huart1, (uint8_t*)ptr, len, 1000);
-    return len;
-}
 /* USER CODE END 1 */

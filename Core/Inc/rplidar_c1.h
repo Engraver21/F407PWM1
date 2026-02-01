@@ -8,6 +8,7 @@
 
 // --- 配置 ---
 #define LIDAR_DMA_BUFFER_SIZE 4096 // DMA 缓冲区大小（从 main.c 移入）
+#define LIDAR_SUM 256
 // --- 配置结束 ---
 
 // LIDAR 状态（从 main.c 移入）
@@ -19,10 +20,17 @@ typedef enum {
     RECEIVING_SCAN_PACKET
 } RPLIDAR_State_TypeDef;
 
+// 定义采集状态
+typedef enum {
+    STATE_FIND_START,  // 阶段1：寻找起始标志位 (Sync Bit)
+    STATE_RECORDING,   // 阶段2：正在录制这一圈的数据
+    STATE_PRINTING     // 阶段3：暂停录制，正在打印/处理
+} LidarState_t;
+
 // LIDAR 库的主数据结构
 typedef struct {
     // --- HAL 句柄（通过 Init 赋值）---
-    UART_HandleTypeDef* lidar_uart; // 连接 LIDAR 的 UART（例如：&huart1）
+    UART_HandleTypeDef* lidar_uart; // 连接 LIDAR 的 UART（例如：&huart6）
     UART_HandleTypeDef* pc_uart;    // 连接 PC 的 UART（例如：&huart2）
     DMA_HandleTypeDef* lidar_dma;   // LIDAR UART RX DMA（例如：&hdma_usart1_rx）
 
@@ -44,13 +52,13 @@ typedef struct {
     uint16_t            filter_max_dist_x4;     // 最大距离限制（mm * 4）
 
 
-        // --- 平均值计算（新增部分）---
-        volatile uint32_t   total_distance_sum;   // 一圈内有效距离的总和 (x4)
-        volatile uint16_t   total_distance_count; // 一圈内有效点的数量
-        volatile bool       new_revolution;     // 当完成新的一圈时变为 'true'
-        volatile uint16_t   last_avg_distance_x4; // 计算出的上一次平均距离 (x4)
-        volatile uint16_t   last_point_count;     // 上一次平均计算中使用的点数
-        volatile uint16_t   lid_min_quality;      // 最小点质量
+        // // --- 平均值计算（新增部分）---
+        // volatile uint32_t   total_distance_sum;   // 一圈内有效距离的总和 (x4)
+        // volatile uint16_t   total_distance_count; // 一圈内有效点的数量
+        // volatile bool       new_revolution;     // 当完成新的一圈时变为 'true'
+        // volatile uint16_t   last_avg_distance_x4; // 计算出的上一次平均距离 (x4)
+        // volatile uint16_t   last_point_count;     // 上一次平均计算中使用的点数
+    volatile uint16_t   lid_min_quality;      // 最小点质量
 } RPLIDAR_Handle_t;
 
 // --- 库函数 ---
@@ -121,5 +129,5 @@ void RPLIDAR_SetDistanceFilter(RPLIDAR_Handle_t* lidar,
  */
 void RPLIDAR_RxCallback(RPLIDAR_Handle_t* lidar, UART_HandleTypeDef *huart);
 
-
+void RPLIDAR_viewStatus(RPLIDAR_Handle_t* lidar);// 停止扫描
 #endif /* INC_RPLIDAR_C1_H_ */
